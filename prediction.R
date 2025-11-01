@@ -8,16 +8,38 @@
 #               and estimate SNP effects and GEBVs based SNP markers 
 
 ## 1. Initializing
+
 #  -  Import necessary libraries for data manipulation and visualization
+#  -  Install the required packages if not done already
+
+req_pkgs <- c("readxl", "rrBLUP", "ggplot2", "xlsx")
+
+for (p in req_pkgs) {
+  if (!requireNamespace(p, quietly = TRUE)) {
+    install.packages(p, repos = "https://cloud.r-project.org")
+  }
+}
+
 library(xlsx)
 library(readxl)
 library(rrBLUP)
 library(ggplot2)
 
 ## 2. Import Data
+
 #  -  Set the working directory and import the data
 #  -  This section groups and arranges the genotypes from these datasets
 data_dir <- "C:/Users/ehtis/OneDrive - New Mexico State University/SUNNY/Research Projects/Mechanical Harvest Projects/genomic prediction/rrblup"
+
+# input files (relative to data_dir)
+hapmap_fname <- "NMSU150_KNNimp_BeagleImp.hmp.txt"
+pheno_fname  <- "mydata_means.xlsx"
+
+# output directory
+out_dir <- file.path(data_dir, "outputs")
+if (!dir.exists(out_dir)) {
+  dir.create(out_dir, recursive = TRUE)
+}
 
 # show what's inside
 if (dir.exists(data_dir)) {
@@ -26,16 +48,14 @@ if (dir.exists(data_dir)) {
   stop("data_dir does not exist: ", data_dir)
 }
 
-getwd()
-list.files()
-
 ## 3. Import Genotypic and Phenotypic Data
+
 #  -  Prepare the data: Perform quality control on the HapMap file — filter markers by MAF (≥ 0.05), remove highly heterozygous markers (heterozygosity ≤ 0.2), and impute missing genotypes using LD-KNNi in TASSEL (with optional extra imputation using Beagle)
 #  -  Finalize the dataset: Make sure the cleaned and imputed dataset is ready for use
 #  -  Import the file: Read the processed HapMap file for downstream analysis
 
-hapmap_file <- file.path(data_dir, "NMSU150_KNNimp_BeagleImp.hmp.txt")
-pheno_file  <- file.path(data_dir, "mydata_means.xlsx")
+hapmap_file <- file.path(data_dir, hapmap_fname)
+pheno_file  <- file.path(data_dir, pheno_fname)
 
 # error handling for non existant files
 if (!file.exists(hapmap_file)) {
@@ -46,7 +66,7 @@ if (!file.exists(pheno_file)) {
 }
 
 # read the file
-hapmap_data <- read.table("NMSU150_KNNimp_BeagleImp.hmp.txt",
+hapmap_data <- read.table(hapmap_file,
                           header = TRUE,
                           sep = "\t",
                           stringsAsFactors = FALSE,
@@ -61,6 +81,7 @@ str(pheno)
 length(unique(pheno$geno)) # number of Genotypes
 
 ## 4. Function to Convert HapMap Genotypes to Numeric Format
+
 #  -  Purpose: Convert genotype data from character format (e.g., "AA", "AG", "GG") into numeric format (-1, 0, 1) for use in rrBLUP genomic prediction.
 #  -  How it works:
 #1.  Takes a vector of genotypes for a single marker (row from the HapMap matrix)
@@ -401,6 +422,3 @@ head(top50_snps)
 
 # Save to CSV (optional)
 write.csv(top50_snps, "Top50_SNPs_DSFG.csv", row.names = FALSE)
-
-
-
