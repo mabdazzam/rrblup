@@ -53,5 +53,5 @@ Running this script will generate:
 
 ## Reference
 Endelman, J. B. (2011). **Ridge Regression and Other
-Kernels for Genomic Selection with R Package rrBLUP.**  RRRr Plant Genome*,
+Kernels for Genomic Selection with R Package rrBLUP.** Plant Genome*,
 4(3), 250–255.
