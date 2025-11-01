@@ -17,14 +17,35 @@ library(ggplot2)
 ## 2. Import Data
 #  -  Set the working directory and import the data
 #  -  This section groups and arranges the genotypes from these datasets
-setwd("C:/Users/ehtis/OneDrive - New Mexico State University/SUNNY/Research Projects/Mechanical Harvest Projects/genomic prediction/rrblup")
-getwd
+data_dir <- "C:/Users/ehtis/OneDrive - New Mexico State University/SUNNY/Research Projects/Mechanical Harvest Projects/genomic prediction/rrblup"
+
+# show what's inside
+if (dir.exists(data_dir)) {
+  print(list.files(data_dir))
+} else {
+  stop("data_dir does not exist: ", data_dir)
+}
+
+getwd()
 list.files()
 
 ## 3. Import Genotypic and Phenotypic Data
 #  -  Prepare the data: Perform quality control on the HapMap file — filter markers by MAF (≥ 0.05), remove highly heterozygous markers (heterozygosity ≤ 0.2), and impute missing genotypes using LD-KNNi in TASSEL (with optional extra imputation using Beagle)
 #  -  Finalize the dataset: Make sure the cleaned and imputed dataset is ready for use
 #  -  Import the file: Read the processed HapMap file for downstream analysis
+
+hapmap_file <- file.path(data_dir, "NMSU150_KNNimp_BeagleImp.hmp.txt")
+pheno_file  <- file.path(data_dir, "mydata_means.xlsx")
+
+# error handling for non existant files
+if (!file.exists(hapmap_file)) {
+  stop("genotype file not found: ", hapmap_file)
+}
+if (!file.exists(pheno_file)) {
+  stop("phenotype file not found: ", pheno_file)
+}
+
+# read the file
 hapmap_data <- read.table("NMSU150_KNNimp_BeagleImp.hmp.txt",
                           header = TRUE,
                           sep = "\t",
@@ -35,7 +56,7 @@ hapmap_data <- read.table("NMSU150_KNNimp_BeagleImp.hmp.txt",
 # View first few rows
 head(hapmap_data)
 # import the pheno data 
-pheno <- read_excel("mydata_means.xlsx")
+pheno <- read_excel(pheno_file)
 str(pheno)
 length(unique(pheno$geno)) # number of Genotypes
 
@@ -353,9 +374,9 @@ result_DSFG <- genomic_CV(
 )
 
 # Access results
-CV_DSFG$mean_r        # mean predictive ability
-CV_DSFG$fold_cor      # fold-wise correlation
-CV_DSFG$predictions   # observed vs predicted for all individuals
+result_DSFG$mean_r        # mean predictive ability
+result_DSFG$fold_cor      # fold-wise correlation
+result_DSFG$predictions   # observed vs predicted for all individuals
 
 # Get SNP effects
 snp_effects <- model$u
