@@ -415,27 +415,3 @@ result_trait <- genomic_CV(
 result_trait$mean_r        # mean predictive ability
 result_trait$fold_cor      # fold-wise correlation
 result_trait$predictions   # observed vs predicted for all individuals
-
-# Get SNP effects
-snp_effects <- trained_model$u
-
-# Combine with SNP names
-snp_df <- data.frame(
-  SNP = colnames(Z_imputed),
-  Effect = snp_effects
-)
-
-# Calculate absolute effect
-snp_df$AbsEffect <- abs(snp_df$Effect)
-
-# Sort by largest absolute effect
-snp_df_sorted <- snp_df[order(-snp_df$AbsEffect), ]
-
-# Select top 50 SNPs
-top50_snps <- head(snp_df_sorted, 50)
-
-# View
-head(top50_snps)
-
-# Save to CSV (optional)
-write.csv(top50_snps, top50_snps_file, row.names = FALSE)
