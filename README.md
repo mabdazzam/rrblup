@@ -15,7 +15,7 @@ integrating genotype and phenotype data.  It allows users to assess the
 accuracy of prediction models through **cross-validation** and extract **SNP
 effects** for further interpretation.
 
-### Workflow Overview
+## Workflow Overview
 1. **Data Import and Preparation**
    - Reads SNP marker data from a HapMap file (`.hmp.txt`)
    - Imports phenotypic data for target traits (`.xlsx`)
@@ -32,6 +32,21 @@ effects** for further interpretation.
    - Employs **5-fold cross-validation** to evaluate predictive ability
    - Splits the dataset into training and testing sets
    - Calculates correlation (r) between predicted and observed phenotypes
+
+## Getting Started
+
+Clone the repo
+
+```sh
+mkdir -p ~/usr/local/src && cd ~/usr/local/src
+git clone git@github.com:ehtishamsk/rrblup
+cd rrblup
+```
+
+Run the script
+```sh
+Rscript prediction.R"
+```
 
 ## Output
 Running this script will generate:
