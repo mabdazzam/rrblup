@@ -25,28 +25,39 @@ library(readxl)
 library(rrBLUP)
 library(ggplot2)
 
-## 2. Import Data
+## 2. Configuration 
+#  -  Set the input and output directories
+#  -  Define the input/output file names
+#  -  Set the trait name to be analysed
 
-#  -  Set the working directory and import the data
-#  -  This section groups and arranges the genotypes from these datasets
-data_dir <- "C:/Users/ehtis/OneDrive - New Mexico State University/SUNNY/Research Projects/Mechanical Harvest Projects/genomic prediction/rrblup"
+# base dirs (relative to where script is run)
+data_dir <- file.path(getwd(), "inputs")
+out_dir  <- file.path(getwd(), "outputs")
 
-# input files (relative to data_dir)
+# input files (inside data_dir)
 hapmap_fname <- "NMSU150_KNNimp_BeagleImp.hmp.txt"
 pheno_fname  <- "mydata_means.xlsx"
 
-# output directory
-out_dir <- file.path(data_dir, "outputs")
+# analysis target
+trait_name <- "PHT"   # change to any column name in pheno
+
+# check input dir
+if (!dir.exists(data_dir)) {
+  stop("data_dir does not exist: ", data_dir)
+} else {
+  print(list.files(data_dir))
+}
+
+# ensure output dir
 if (!dir.exists(out_dir)) {
   dir.create(out_dir, recursive = TRUE)
 }
 
-# show what's inside
-if (dir.exists(data_dir)) {
-  print(list.files(data_dir))
-} else {
-  stop("data_dir does not exist: ", data_dir)
-}
+# output file templates
+cv_fold_file_tpl <- file.path(out_dir, "%s_CV_fold_correlations.csv")
+cv_pred_file_tpl <- file.path(out_dir, "%s_CV_predictions.csv")
+cv_snps_file_tpl <- file.path(out_dir, "%s_Top%d_SNPs_avgCV.csv")
+top50_snps_file  <- file.path(out_dir, "Top50_SNPs_DSFG.csv")
 
 ## 3. Import Genotypic and Phenotypic Data
 
@@ -151,66 +162,73 @@ str(Z_imputed)
 cat("Total marker:", ncol(Z_imputed), "\n")
 
 # Run mixed.solve with Z (marker effects)
-trained_model_DSFG <- mixed.solve(y = pheno$DSFG, Z = Z_imputed)
+y_vec <- pheno[[trait_name]]
 
-trained_model_DSFG$beta   # overall mean
-
-markers_effect_DSFG <- trained_model_DSFG$u     # SNP effects
-BLUE_DSFG <- trained_model_DSFG$beta            # intercept (fixed effect)
+trained_model <- mixed.solve(y = y_vec, Z = Z_imputed)
+trained_model$beta
+markers_effect <- trained_model$u	# SNP effects
+BLUE <- trained_model$beta		# intercept (fixed effect)
 
 # Predict genomic values
-predict_train_DSFG <- as.matrix(Z_imputed) %*% markers_effect_DSFG
+predict_train <- as.matrix(Z_imputed) %*% markers_effect
 
 # Add BLUEs to get final predictions
-BLUE_DSFG <- as.numeric(trained_model_DSFG$beta)   # force it into a scalar
-predicted_train_result_DSFG <- as.vector(predict_train_DSFG) + BLUE_DSFG
+predicted_train_result <- as.vector(predict_train) + as.numeric(BLUE)
 
 # Summary of predictions
-summary(predicted_train_result_DSFG)
+summary(predicted_train_result)
 
 # Correlation between observed and predicted DSFR
-cor(as.vector(pheno$DSFG), predicted_train_result_DSFG, use = "complete")
+cor(as.vector(y_vec), predicted_train_result, use = "complete")
 
 # Create a data frame for plotting
-DSFG_Obs_Pred_plot <- data.frame(
-  Observed = pheno$DSFG,
-  Predicted = predicted_train_result_DSFG
+obs_pred_df <- data.frame(
+  Observed  = y_vec,
+  Predicted = predicted_train_result
 )
 
 # Create scatter plot with 1:1 reference line
-DSFG_plot <- ggplot(DSFG_Obs_Pred_plot, aes(x = Observed, y = Predicted)) +
+plot_title <- paste("Observed vs Predicted", trait_name, "- Training Set")
+
+trait_plot <- ggplot(obs_pred_df, aes(x = Observed, y = Predicted)) +
   geom_point(color = "darkgreen", size = 3, alpha = 0.7) +
   geom_abline(intercept = 0, slope = 1, linetype = "dashed",
-              color = "red", size = 1) +
+              color = "red", linewidth = 1) +
   theme_minimal(base_size = 14) +
   labs(
-    title = "Observed vs Predicted Destemming Force (DSFG) - Training Set",
-    x = "Observed DSFG",
-    y = "Predicted DSFG"
+    title = plot_title,
+    x = paste("Observed", trait_name),
+    y = paste("Predicted", trait_name)
   ) +
   annotate(
     "text",
-    x = min(DSFG_Obs_Pred_plot$Observed, na.rm = TRUE) + 5,
-    y = max(DSFG_Obs_Pred_plot$Predicted, na.rm = TRUE) - 5,
+    x = min(obs_pred_df$Observed, na.rm = TRUE) + 5,
+    y = max(obs_pred_df$Predicted, na.rm = TRUE) - 5,
     label = paste0("r = ",
-                   round(cor(DSFG_Obs_Pred_plot$Observed,
-                             DSFG_Obs_Pred_plot$Predicted, use = "complete.obs"), 2)),
+                   round(cor(obs_pred_df$Observed,
+                             obs_pred_df$Predicted, use = "complete.obs"), 2)),
     color = "blue",
     size = 5
   )
 
-# Display the plot
-DSFG_plot
+trait_plot
 
 # Save the plot
-# ggsave("DSFG_Obs_Pred_plot.png", plot = DSFR_plot, width = 10, height = 6, dpi = 600, bg = "white")
+plot_file <- file.path(out_dir, paste0(trait_name, "_Obs_Pred_plot.png"))
+ggsave(
+  filename = plot_file,
+  plot     = trait_plot,
+  width    = 10,
+  height   = 6,
+  dpi      = 600,
+  bg       = "white"
+)
 
 ## 6. Create 5 folds for cross-validation
 set.seed(123)  # for reproducibility
 n <- nrow(Z_imputed)
 K <- 5  # number of folds
-y <- pheno$DSFG
-
+y <- pheno[[trait_name]]
 
 folds <- sample(rep(1:K, length.out = n))  # assign each individual to one fold
 
@@ -263,7 +281,7 @@ ggplot(cv_results, aes(x = factor(Fold), y = Correlation)) +
   geom_text(aes(label = round(Correlation, 2)), vjust = -0.5, size = 4) +
   theme_minimal(base_size = 14) +
   labs(
-    title = "5-Fold Cross-Validation Predictive Ability (DSFG)",
+    title = paste("5-Fold Cross-Validation Predictive Ability (", trait_name, ")", sep = ""),
     x = "Fold Number",
     y = "Predictive Ability (r)"
   ) +
@@ -360,18 +378,17 @@ genomic_CV <- function(y_vec, Z_matrix, trait_name,
   # Save results (optional)
   
   if (save_results) {
-    fold_file <- paste0(trait_name, "_CV_fold_correlations.csv")
-    pred_file <- paste0(trait_name, "_CV_predictions.csv")
-    snp_file <- paste0(trait_name, "_Top", top_n_snps, "_SNPs_avgCV.csv")
-    
-    write.csv(data.frame(Fold = 1:k_folds, Correlation = fold_cor),
-              fold_file, row.names = FALSE)
-    write.csv(all_predictions, pred_file, row.names = FALSE)
-    write.csv(top_snps, snp_file, row.names = FALSE)
-    
-    cat("\nCSV files saved:\n", fold_file, "\n", pred_file, "\n", snp_file, "\n")
-  }
-  
+  fold_file <- sprintf(cv_fold_file_tpl, trait_name)
+  pred_file <- sprintf(cv_pred_file_tpl, trait_name)
+  snp_file  <- sprintf(cv_snps_file_tpl, trait_name, top_n_snps)
+
+  write.csv(data.frame(Fold = 1:k_folds, Correlation = fold_cor),
+            fold_file, row.names = FALSE)
+  write.csv(all_predictions, pred_file, row.names = FALSE)
+  write.csv(top_snps, snp_file, row.names = FALSE)
+
+  cat("\nCSV files saved in:", out_dir, "\n")
+}
   
   # Return all outputs
   
@@ -386,21 +403,21 @@ genomic_CV <- function(y_vec, Z_matrix, trait_name,
 }
 
 ## 8. Call the function 'genomic_CV' for different traits
-# Run 5-fold CV for DSFG and save CSV results
-result_DSFG <- genomic_CV(
-  y_vec = pheno$DSFG,
+# Run 5-fold CV for the trait (PHT) and save CSV results
+result_trait <- genomic_CV(
+  y_vec    = pheno[[trait_name]],
   Z_matrix = Z_imputed,
-  trait_name = "DSFG",
-  k_folds = 5
+  trait_name = trait_name,
+  k_folds  = 5
 )
 
 # Access results
-result_DSFG$mean_r        # mean predictive ability
-result_DSFG$fold_cor      # fold-wise correlation
-result_DSFG$predictions   # observed vs predicted for all individuals
+result_trait$mean_r        # mean predictive ability
+result_trait$fold_cor      # fold-wise correlation
+result_trait$predictions   # observed vs predicted for all individuals
 
 # Get SNP effects
-snp_effects <- model$u
+snp_effects <- trained_model$u
 
 # Combine with SNP names
 snp_df <- data.frame(
@@ -421,4 +438,4 @@ top50_snps <- head(snp_df_sorted, 50)
 head(top50_snps)
 
 # Save to CSV (optional)
-write.csv(top50_snps, "Top50_SNPs_DSFG.csv", row.names = FALSE)
+write.csv(top50_snps, top50_snps_file, row.names = FALSE)
