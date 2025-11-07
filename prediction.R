@@ -8,10 +8,6 @@
 #               and estimate SNP effects and GEBVs based SNP markers 
 
 ## 1. Initializing
-
-#  -  Import necessary libraries for data manipulation and visualization
-#  -  Install the required packages if not done already
-
 req_pkgs <- c("readxl", "rrBLUP", "ggplot2", "xlsx")
 
 for (p in req_pkgs) {
@@ -25,393 +21,201 @@ library(readxl)
 library(rrBLUP)
 library(ggplot2)
 
-## 2. Configuration 
-#  -  Set the input and output directories
-#  -  Define the input/output file names
-#  -  Set the trait name to be analysed
+## 2. Configuration
+data_dir <- "C:/Users/ehtis/OneDrive - New Mexico State University/SUNNY/Research Projects/Mechanical Harvest Projects/genomic prediction/rrblup"
+out_dir  <- file.path(data_dir, "outputs")
 
-# base dirs (relative to where script is run)
-data_dir <- file.path(getwd(), "inputs")
-out_dir  <- file.path(getwd(), "outputs")
-
-# input files (inside data_dir)
 hapmap_fname <- "NMSU150_KNNimp_BeagleImp.hmp.txt"
 pheno_fname  <- "mydata_means.xlsx"
+trait_name <- "RED"
 
-# analysis target
-trait_name <- "PHT"   # change to any column name in pheno
+if (!dir.exists(data_dir)) stop("data_dir does not exist: ", data_dir)
+if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
 
-# check input dir
-if (!dir.exists(data_dir)) {
-  stop("data_dir does not exist: ", data_dir)
-} else {
-  print(list.files(data_dir))
-}
-
-# ensure output dir
-if (!dir.exists(out_dir)) {
-  dir.create(out_dir, recursive = TRUE)
-}
-
-# output file templates
 cv_fold_file_tpl <- file.path(out_dir, "%s_CV_fold_correlations.csv")
 cv_pred_file_tpl <- file.path(out_dir, "%s_CV_predictions.csv")
 cv_snps_file_tpl <- file.path(out_dir, "%s_Top%d_SNPs_avgCV.csv")
 top50_snps_file  <- file.path(out_dir, "Top50_SNPs_DSFG.csv")
 
 ## 3. Import Genotypic and Phenotypic Data
-
-#  -  Prepare the data: Perform quality control on the HapMap file — filter markers by MAF (≥ 0.05), remove highly heterozygous markers (heterozygosity ≤ 0.2), and impute missing genotypes using LD-KNNi in TASSEL (with optional extra imputation using Beagle)
-#  -  Finalize the dataset: Make sure the cleaned and imputed dataset is ready for use
-#  -  Import the file: Read the processed HapMap file for downstream analysis
-
 hapmap_file <- file.path(data_dir, hapmap_fname)
 pheno_file  <- file.path(data_dir, pheno_fname)
 
-# error handling for non existant files
-if (!file.exists(hapmap_file)) {
-  stop("genotype file not found: ", hapmap_file)
-}
-if (!file.exists(pheno_file)) {
-  stop("phenotype file not found: ", pheno_file)
-}
+if (!file.exists(hapmap_file)) stop("genotype file not found: ", hapmap_file)
+if (!file.exists(pheno_file)) stop("phenotype file not found: ", pheno_file)
 
-# read the file
-hapmap_data <- read.table(hapmap_file,
-                          header = TRUE,
-                          sep = "\t",
-                          stringsAsFactors = FALSE,
-                          check.names = FALSE,   # avoids R altering column names
-                          quote = "",            # prevents issues with quotes
-                          comment.char = "")     # prevents skipping lines starting with #
-# View first few rows
+hapmap_data <- read.table(hapmap_file, header = TRUE, sep = "\t", stringsAsFactors = FALSE, check.names = FALSE, quote = "", comment.char = "")
 head(hapmap_data)
-# import the pheno data 
+
 pheno <- read_excel(pheno_file)
 str(pheno)
-length(unique(pheno$geno)) # number of Genotypes
+length(unique(pheno$geno))
 
-## 4. Function to Convert HapMap Genotypes to Numeric Format
-
-#  -  Purpose: Convert genotype data from character format (e.g., "AA", "AG", "GG") into numeric format (-1, 0, 1) for use in rrBLUP genomic prediction.
-#  -  How it works:
-#1.  Takes a vector of genotypes for a single marker (row from the HapMap matrix)
-#2.  Converts "NA" strings to actual NA values
-#3.  Identifies the unique alleles present in that marker (ignores NAs)
-#4.  Assigns numeric codes according to rrBLUP scheme
-#-   homozygous for the first allele = -1
-#-   heterozygous (first allele + second allele) = 0
-#-   homozygous for the second allele = 1
-#5.  If the genotype does not match the expected pattern or marker has more than 2 alleles, it returns NA for that genotype
-#-   Works marker by marker (row by row)
-#-   Assumes diploid, bi-allelic SNPs
-#-   Handles missing data (NA) safely
+## 4. Convert HapMap to Numeric
 convert_geno <- function(geno_row) {
-  # Replace "NA" strings with actual NA
   geno_row[geno_row == "NA"] <- NA
-  
-  # Get unique alleles ignoring NA
   alleles <- unique(unlist(strsplit(na.omit(geno_row), split = "")))
-  
-  # If not bi-allelic, return NAs
-  if(length(alleles) != 2) {
-    return(rep(NA, length(geno_row)))
-  }
-  
-  # Convert to numeric codes
+  if(length(alleles) != 2) return(rep(NA, length(geno_row)))
   sapply(geno_row, function(g) {
     if(is.na(g)) return(NA)
     if(g == paste0(alleles[1], alleles[1])) return(-1)
     if(g == paste0(alleles[2], alleles[2])) return(1)
     if(all(g %in% alleles)) return(0)
-    return(NA)  # Unexpected genotype
+    return(NA)
   })
 }
-# Keep Marker IDs and GBS columns
-geno_cols <- grep("^GBS", colnames(hapmap_data))  # Genotype columns only
-marker_ids <- hapmap_data$`rs#`                   # Marker IDs
 
-# Apply conversion row by row
+geno_cols <- grep("^GBS", colnames(hapmap_data))
+marker_ids <- hapmap_data$`rs#`
 geno_numeric <- t(apply(hapmap_data[, geno_cols], 1, convert_geno))
-
-# Convert to data frame and restore column names
 geno_numeric <- data.frame(rs. = marker_ids, geno_numeric, check.names = FALSE)
 colnames(geno_numeric)[-1] <- colnames(hapmap_data)[geno_cols]
 
-# View first few rows of numeric genotype data
-head(geno_numeric)
-
-# Remove the rs. column temporarily for transposition
 geno_only <- geno_numeric[, -1]
-
-# Transpose the matrix: now rows = individuals, columns = markers
 geno_transposed <- t(geno_only)
-
-# Convert to data frame and keep marker IDs as column names
 geno_transposed <- data.frame(geno_transposed)
+colnames(geno_transposed) <- geno_numeric$rs.
+rownames(geno_transposed) <- colnames(geno_only)  # sample IDs
 
-colnames(geno_transposed) <- geno_numeric$rs.  # marker IDs as column names
-rownames(geno_transposed) <- colnames(geno_only)  # samples as row names
-
-## 5. Train the model and summerize the results
-# Use A.mat() to impute missing genotypes
+## 5. Impute missing genotypes and align phenotypes
 Z_imputed <- A.mat(geno_transposed, return.imputed = TRUE)$imputed
-str(Z_imputed)
-
-# total number of markers to train the model 
 cat("Total marker:", ncol(Z_imputed), "\n")
 
-# Run mixed.solve with Z (marker effects)
-y_vec <- pheno[[trait_name]]
+# Align phenotype vector with genotype rownames
+if(!all(pheno$geno %in% rownames(Z_imputed))) stop("Some genotypes in phenotype file are missing in genotype matrix")
+y_vec <- pheno[[trait_name]][match(rownames(Z_imputed), pheno$geno)]
 
+## 6. Train model and summarize
 trained_model <- mixed.solve(y = y_vec, Z = Z_imputed)
-trained_model$beta
-markers_effect <- trained_model$u	# SNP effects
-BLUE <- trained_model$beta		# intercept (fixed effect)
+BLUE <- as.numeric(trained_model$beta)
+BLUP <- as.vector(as.matrix(Z_imputed) %*% trained_model$u)
+predicted_train_result <- BLUE + BLUP
 
-# Predict genomic values
-predict_train <- as.matrix(Z_imputed) %*% markers_effect
-
-# Add BLUEs to get final predictions
-predicted_train_result <- as.vector(predict_train) + as.numeric(BLUE)
-
-# Summary of predictions
-summary(predicted_train_result)
-
-# Correlation between observed and predicted DSFR
-cor(as.vector(y_vec), predicted_train_result, use = "complete")
-
-# Create a data frame for plotting
 obs_pred_df <- data.frame(
+  Genotype  = rownames(Z_imputed),
   Observed  = y_vec,
-  Predicted = predicted_train_result
+  Predicted = predicted_train_result,
+  BLUE      = rep(BLUE, length(y_vec)),
+  BLUP      = BLUP
 )
 
-# Create scatter plot with 1:1 reference line
-plot_title <- paste("Observed vs Predicted", trait_name, "- Training Set")
+summary(predicted_train_result)
+cor(y_vec, predicted_train_result, use = "complete.obs")
 
+# Scatter plot
+plot_title <- paste("Observed vs Predicted", trait_name, "- Training Set")
 trait_plot <- ggplot(obs_pred_df, aes(x = Observed, y = Predicted)) +
   geom_point(color = "darkgreen", size = 3, alpha = 0.7) +
-  geom_abline(intercept = 0, slope = 1, linetype = "dashed",
-              color = "red", linewidth = 1) +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "red", linewidth = 1) +
   theme_minimal(base_size = 14) +
-  labs(
-    title = plot_title,
-    x = paste("Observed", trait_name),
-    y = paste("Predicted", trait_name)
-  ) +
-  annotate(
-    "text",
-    x = min(obs_pred_df$Observed, na.rm = TRUE) + 5,
-    y = max(obs_pred_df$Predicted, na.rm = TRUE) - 5,
-    label = paste0("r = ",
-                   round(cor(obs_pred_df$Observed,
-                             obs_pred_df$Predicted, use = "complete.obs"), 2)),
-    color = "blue",
-    size = 5
-  )
-
+  labs(title = plot_title, x = paste("Observed", trait_name), y = paste("Predicted", trait_name)) +
+  annotate("text", x = min(obs_pred_df$Observed, na.rm = TRUE)+5, y = max(obs_pred_df$Predicted, na.rm = TRUE)-5,
+           label = paste0("r = ", round(cor(obs_pred_df$Observed, obs_pred_df$Predicted, use = "complete.obs"),2)),
+           color = "blue", size = 5)
 trait_plot
 
-# Save the plot
 plot_file <- file.path(out_dir, paste0(trait_name, "_Obs_Pred_plot.png"))
-ggsave(
-  filename = plot_file,
-  plot     = trait_plot,
-  width    = 10,
-  height   = 6,
-  dpi      = 600,
-  bg       = "white"
-)
+ggsave(filename = plot_file, plot = trait_plot, width = 10, height = 6, dpi = 600, bg = "white")
 
-## 6. Create 5 folds for cross-validation
-set.seed(123)  # for reproducibility
-n <- nrow(Z_imputed)
-K <- 5  # number of folds
-y <- pheno[[trait_name]]
-
-folds <- sample(rep(1:K, length.out = n))  # assign each individual to one fold
-
-# Initialize vector to store prediction correlations
-fold_cor <- numeric(K)
-
-# Cross-validation loop
-for (k in 1:K) {
-  cat("\nRunning Fold", k, "...\n")
-  # Training and validation indices
-  train_index <- which(folds != k)
-  valid_index <- which(folds == k)
-  
-  # Partition data
-  Z_train <- Z_imputed[train_index, ]
-  y_train <- y[train_index]
-  Z_valid <- Z_imputed[valid_index, ]
-  y_valid <- y[valid_index]
-  
-  # Train model on training set
-  model <- mixed.solve(y = y_train, Z = Z_train)
-  
-  # Extract effects
-  marker_effects <- model$u
-  intercept <- as.numeric(model$beta)
-  
-  # Predict for validation individuals
-  y_pred <- as.vector(Z_valid %*% marker_effects) + intercept
-  
-  # Compute correlation between observed and predicted
-  fold_cor[k] <- cor(y_valid, y_pred, use = "complete.obs")
-  
-  cat("  Fold", k, "correlation (r):", round(fold_cor[k], 3), "\n")
-}
-
-# Compute overall predictive ability
-mean_r <- mean(fold_cor, na.rm = TRUE)
-sd_r <- sd(fold_cor, na.rm = TRUE)
-
-
-cat("Mean predictive ability (r):", round(mean_r, 3), "\n")
-cat("SD of predictive ability:", round(sd_r, 3), "\n")
-
-# Visualize fold results
-cv_results <- data.frame(Fold = 1:K, Correlation = fold_cor)
-
-
-ggplot(cv_results, aes(x = factor(Fold), y = Correlation)) +
-  geom_bar(stat = "identity", fill = "steelblue") +
-  geom_text(aes(label = round(Correlation, 2)), vjust = -0.5, size = 4) +
-  theme_minimal(base_size = 14) +
-  labs(
-    title = paste("5-Fold Cross-Validation Predictive Ability (", trait_name, ")", sep = ""),
-    x = "Fold Number",
-    y = "Predictive Ability (r)"
-  ) +
-  ylim(0, 1)
-
-## 7. Function for k-fold cross-validation
-#-    This function will be use to run CV for multiple traits
-
-genomic_CV <- function(y_vec, Z_matrix, trait_name,
-                       k_folds = 5, seed = 123,
-                       save_results = TRUE,
+## 7. 5-fold CV function (with genotype alignment)
+genomic_CV <- function(y_vec, Z_matrix, pheno_names, trait_name,
+                       k_folds = 5, seed = 123, save_results = TRUE,
                        top_n_snps = 50) {
   library(rrBLUP)
-  
-  # Input check
-  if (length(y_vec) != nrow(Z_matrix)) {
-    stop("Length of phenotype vector does not match number of individuals in genotype matrix.")
-  }
-  
-  # Create folds
   set.seed(seed)
+  
+  # Align phenotype vector with Z_matrix rows
+  y_vec <- y_vec[match(rownames(Z_matrix), pheno_names)]
+  
   n <- length(y_vec)
   folds <- sample(rep(1:k_folds, length.out = n))
   
-  # Storage
   fold_cor <- numeric(k_folds)
-  all_predictions <- data.frame(Observed = numeric(0),
-                                Predicted = numeric(0),
-                                Fold = integer(0))
-  snp_effects_list <- list()  # store SNP effects per fold
+  all_predictions <- data.frame(Genotype = character(0), Observed = numeric(0), Predicted = numeric(0),
+                                BLUE = numeric(0), BLUP = numeric(0), Fold = integer(0))
+  snp_effects_list <- list()
   
-  
-  # Cross-validation loop
-  
-  for (k in 1:k_folds) {
-    cat("\nRunning Fold", k, "of", k_folds, "...\n")
-    
+  for(k in 1:k_folds) {
     train_idx <- which(folds != k)
     valid_idx <- which(folds == k)
     
     Z_train <- Z_matrix[train_idx, ]
-    y_train <- y_vec[train_idx]
     Z_valid <- Z_matrix[valid_idx, ]
+    y_train <- y_vec[train_idx]
     y_valid <- y_vec[valid_idx]
     
-    # Train rrBLUP model
     model <- mixed.solve(y = y_train, Z = Z_train)
-    marker_effects <- model$u
-    intercept <- as.numeric(model$beta)
+    BLUE <- as.numeric(model$beta)
+    BLUP <- as.vector(Z_valid %*% model$u)
+    y_pred <- BLUE + BLUP
     
-    # Store SNP effects
-    snp_effects_list[[k]] <- marker_effects
-    
-    # Predict on validation set
-    y_pred <- as.vector(Z_valid %*% marker_effects) + intercept
-    
-    # Compute correlation
     fold_cor[k] <- cor(y_valid, y_pred, use = "complete.obs")
+    snp_effects_list[[k]] <- model$u
     
-    # Store predictions
     all_predictions <- rbind(
       all_predictions,
-      data.frame(Observed = y_valid, Predicted = y_pred, Fold = k)
+      data.frame(
+        Genotype = rownames(Z_valid),
+        Observed = y_valid,
+        Predicted = y_pred,
+        BLUE = rep(BLUE, length(y_valid)),
+        BLUP = BLUP,
+        Fold = k
+      )
     )
     
-    cat("  Fold", k, "correlation (r):", round(fold_cor[k], 3), "\n")
+    cat("Fold", k, "r =", round(fold_cor[k],3), "\n")
   }
-  
-  # Compute cross-validated statistics
   
   mean_r <- mean(fold_cor, na.rm = TRUE)
   sd_r <- sd(fold_cor, na.rm = TRUE)
   
-  cat("\nMean predictive ability (r):", round(mean_r, 3), "\n")
-  cat("SD of predictive ability:", round(sd_r, 3), "\n")
-  
-  
-  # Compute average SNP effects across folds
-  
-  cat("\nAveraging SNP effects across folds...\n")
+  # Average SNP effects
   snp_effects_matrix <- do.call(cbind, snp_effects_list)
   avg_snp_effects <- rowMeans(snp_effects_matrix, na.rm = TRUE)
-  
-  snp_effects_df <- data.frame(
-    SNP = colnames(Z_matrix),
-    AvgEffect = avg_snp_effects,
-    AbsEffect = abs(avg_snp_effects)
-  )
-  
+  snp_effects_df <- data.frame(SNP = colnames(Z_matrix), AvgEffect = avg_snp_effects, AbsEffect = abs(avg_snp_effects))
   snp_effects_sorted <- snp_effects_df[order(-snp_effects_df$AbsEffect), ]
   top_snps <- head(snp_effects_sorted, top_n_snps)
   
+  if(save_results) {
+    write.csv(data.frame(Fold = 1:k_folds, Correlation = fold_cor),
+              sprintf(cv_fold_file_tpl, trait_name), row.names = FALSE)
+    write.csv(all_predictions, sprintf(cv_pred_file_tpl, trait_name), row.names = FALSE)
+    write.csv(top_snps, sprintf(cv_snps_file_tpl, trait_name, top_n_snps), row.names = FALSE)
+    cat("CSV files saved in:", out_dir, "\n")
+  }
   
-  # Save results (optional)
-  
-  if (save_results) {
-  fold_file <- sprintf(cv_fold_file_tpl, trait_name)
-  pred_file <- sprintf(cv_pred_file_tpl, trait_name)
-  snp_file  <- sprintf(cv_snps_file_tpl, trait_name, top_n_snps)
-
-  write.csv(data.frame(Fold = 1:k_folds, Correlation = fold_cor),
-            fold_file, row.names = FALSE)
-  write.csv(all_predictions, pred_file, row.names = FALSE)
-  write.csv(top_snps, snp_file, row.names = FALSE)
-
-  cat("\nCSV files saved in:", out_dir, "\n")
-}
-  
-  # Return all outputs
-  
-  return(list(
-    fold_cor = fold_cor,
-    mean_r = mean_r,
-    sd_r = sd_r,
-    predictions = all_predictions,
-    snp_effects = snp_effects_sorted,
-    top_snps = top_snps
-  ))
+  return(list(fold_cor = fold_cor, mean_r = mean_r, sd_r = sd_r,
+              predictions = all_predictions, snp_effects = snp_effects_sorted,
+              top_snps = top_snps))
 }
 
-## 8. Call the function 'genomic_CV' for different traits
-# Run 5-fold CV for the trait (PHT) and save CSV results
+
+
+## 8. Run CV
 result_trait <- genomic_CV(
-  y_vec    = pheno[[trait_name]],
+  y_vec = pheno[[trait_name]],
   Z_matrix = Z_imputed,
+  pheno_names = pheno$geno,
   trait_name = trait_name,
-  k_folds  = 5
+  k_folds = 5
 )
 
 # Access results
-result_trait$mean_r        # mean predictive ability
-result_trait$fold_cor      # fold-wise correlation
-result_trait$predictions   # observed vs predicted for all individuals
+result_trait$predictions  # Genotype, BLUE, BLUP, Predicted, Fold
+result_trait$fold_cor
+result_trait$mean_r
+
+
+# Check
+all(obs_pred_df$Genotype == rownames(Z_imputed)) # Should return TRUE
+
+cv_check <- result_trait$predictions
+# Check each fold
+for(f in unique(cv_check$Fold)) {
+  fold_genos <- cv_check$Genotype[cv_check$Fold == f]
+  if(length(fold_genos) != length(unique(fold_genos))) {
+    warning(paste("Duplicate genotypes in fold", f))
+  }
+  cat("Fold", f, "genotypes check passed:", all(fold_genos %in% rownames(Z_imputed)), "\n")
+}
